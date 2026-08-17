@@ -387,7 +387,8 @@ def main():
     app = QApplication(sys.argv)
     
     # Target path for spritesheet
-    spritesheet_path = os.path.join(os.path.dirname(__file__), "robot", "spritesheet.webp")
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    spritesheet_path = os.path.join(base_dir, "robot", "spritesheet.webp")
     
     try:
         anims = load_animations(spritesheet_path)
