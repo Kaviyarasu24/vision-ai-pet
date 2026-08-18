@@ -23,6 +23,8 @@ class DesktopPet(QWidget):
         # UI Elements
         self.label = QLabel(self)
         self.label.setFixedSize(SPRITE_WIDTH, SPRITE_HEIGHT)
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setScaledContents(False)
         self.setFixedSize(SPRITE_WIDTH, SPRITE_HEIGHT)
 
         # Physics & Position States

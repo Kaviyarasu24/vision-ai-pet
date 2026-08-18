@@ -1,5 +1,9 @@
 import sys
 import os
+
+# Disable high-DPI scaling rounding issues that cause size jitter/shaking on Windows
+os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
+
 from PySide6.QtWidgets import QApplication
 
 from src.vision_pet.client.pet_widget import DesktopPet
