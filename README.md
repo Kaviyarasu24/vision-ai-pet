@@ -21,13 +21,26 @@ VISION features expressive animations, system awareness, and integration capabil
 ## Folder Structure
 
 ```text
-Kaviyarasu24/POS/
-├── desktop_pet.py       # Main PySide6 desktop pet client & TCP listener
-├── backend_stub.py      # Example integration showing backend API control
-├── README.md            # Project documentation (this file)
-└── robot/
-    ├── pet.json         # Pet metadata (casing details, names, description)
-    └── spritesheet.webp # Sprite assets (8x9 Grid of 192x208px animation frames)
+vision-ai-pet/
+├── assets/                 # Central assets folder
+│   └── robot/
+│       ├── pet.json         # Pet metadata (casing details, names, description)
+│       └── spritesheet.webp # Sprite assets (8x9 Grid of 192x208px animation frames)
+├── src/                    # Source package directory
+│   └── vision_pet/
+│       ├── __init__.py
+│       ├── client/         # Desktop Pet client subpackage
+│       │   ├── __init__.py
+│       │   ├── __main__.py # Client runner entry point
+│       │   ├── listener.py # TCP socket server thread
+│       │   ├── pet_widget.py # PySide6 window widget & physics loop
+│       │   └── utils.py    # Image loader and conversion utilities
+│       └── backend/        # Custom backend/integration subpackage
+│           ├── __init__.py
+│           ├── __main__.py # Backend integration test loop runner
+│           └── stub.py     # Socket communication helper
+├── requirements.txt        # List of package dependencies
+└── README.md               # Project documentation (this file)
 ```
 
 ---
@@ -44,11 +57,16 @@ Kaviyarasu24/POS/
 
 ## Running VISION
 
-To launch the desktop pet companion on your screen:
+To launch the desktop pet companion client on your screen:
 ```bash
-python desktop_pet.py
+python -m src.vision_pet.client
 ```
-This runs the pet client and starts listening for socket commands on `127.0.0.1:5050`.
+This runs the PySide6 pet client and starts listening for socket commands on `127.0.0.1:5050`.
+
+To run the sample backend integration loop in a separate terminal:
+```bash
+python -m src.vision_pet.backend
+```
 
 ---
 

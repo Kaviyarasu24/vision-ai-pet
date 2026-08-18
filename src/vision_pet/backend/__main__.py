@@ -1,23 +1,7 @@
-import socket
 import time
+from src.vision_pet.backend.stub import send_command
 
-def send_command(command):
-    """Sends a state change command to the running Desktop Pet on localhost:5050."""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(2.0)
-        s.connect(("127.0.0.1", 5050))
-        s.sendall(command.encode('utf-8'))
-        response = s.recv(1024).decode('utf-8').strip()
-        print(f"Sent: '{command}' | Server Response: '{response}'")
-        s.close()
-    except ConnectionRefusedError:
-        print("Could not connect to Desktop Pet: Connection refused.")
-        print("Please verify that desktop_pet.py is running and listening on port 5050.")
-    except Exception as e:
-        print(f"Error communicating with Desktop Pet: {e}")
-
-if __name__ == "__main__":
+def main():
     print("--- Desktop Pet Integration Test Stub ---")
     print("This script demonstrates how your custom Python backend can trigger states on the floating pet.\n")
     
@@ -44,3 +28,6 @@ if __name__ == "__main__":
     # 5. Restore autopilot wander mode
     print("5. Re-enabling autopilot wander mode...")
     send_command("mode:wander")
+
+if __name__ == "__main__":
+    main()

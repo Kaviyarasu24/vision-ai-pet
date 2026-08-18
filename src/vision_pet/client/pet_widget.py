@@ -1,109 +1,10 @@
-import sys
-import os
-import socket
 import random
-from PySide6.QtWidgets import QApplication, QWidget, QLabel, QMenu
-from PySide6.QtCore import Qt, QTimer, QPoint, QThread, Signal
-from PySide6.QtGui import QPixmap, QImage, QAction
-from PIL import Image
+from PySide6.QtWidgets import QWidget, QLabel, QMenu, QApplication
+from PySide6.QtCore import Qt, QTimer, QPoint
+from PySide6.QtGui import QAction
 
-# Spritesheet configuration
-SPRITE_WIDTH = 192
-SPRITE_HEIGHT = 208
-COLS = 8
-ROWS = 9
-
-ANIMATIONS = {
-    "idle": {"row": 0, "frames": 6, "speed": 150, "loop": True},
-    "running_right": {"row": 1, "frames": 8, "speed": 100, "loop": True},
-    "running_left": {"row": 2, "frames": 8, "speed": 100, "loop": True},
-    "wave": {"row": 3, "frames": 4, "speed": 180, "loop": False, "next": "idle"},
-    "jump": {"row": 4, "frames": 5, "speed": 120, "loop": False, "next": "idle"},
-    "failed": {"row": 5, "frames": 8, "speed": 120, "loop": True},
-    "waiting": {"row": 6, "frames": 6, "speed": 150, "loop": True},
-    "running": {"row": 7, "frames": 6, "speed": 100, "loop": True},
-    "review": {"row": 8, "frames": 6, "speed": 150, "loop": True}
-}
-
-def pil_to_pixmap(pil_img):
-    """Converts a PIL Image to PySide6 QPixmap preserving alpha transparency."""
-    if pil_img.mode != "RGBA":
-        pil_img = pil_img.convert("RGBA")
-    data = pil_img.tobytes("raw", "RGBA")
-    qimg = QImage(data, pil_img.size[0], pil_img.size[1], QImage.Format.Format_RGBA8888)
-    return QPixmap.fromImage(qimg)
-
-def load_animations(sheet_path):
-    """Crops spritesheet frames using Pillow and loads them into a dictionary of QPixmaps."""
-    if not os.path.exists(sheet_path):
-        raise FileNotFoundError(f"Spritesheet not found at: {sheet_path}")
-        
-    img = Image.open(sheet_path).convert("RGBA")
-    anims = {}
-    for name, config in ANIMATIONS.items():
-        row = config["row"]
-        frames_count = config["frames"]
-        frames = []
-        for col in range(frames_count):
-            box = (
-                col * SPRITE_WIDTH,
-                row * SPRITE_HEIGHT,
-                (col + 1) * SPRITE_WIDTH,
-                (row + 1) * SPRITE_HEIGHT
-            )
-            crop_frame = img.crop(box)
-            frames.append(pil_to_pixmap(crop_frame))
-        anims[name] = frames
-    return anims
-
-
-class BackendListener(QThread):
-    """Runs a background TCP socket server to accept commands from the Python backend."""
-    command_received = Signal(str)
-
-    def __init__(self, host="127.0.0.1", port=5050):
-        super().__init__()
-        self.host = host
-        self.port = port
-        self.running = True
-
-    def run(self):
-        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            server.bind((self.host, self.port))
-            server.listen(5)
-            server.settimeout(1.0) # Periodically check running state
-        except Exception as e:
-            print(f"[Listener] Error binding to {self.host}:{self.port}: {e}")
-            return
-
-        print(f"[Listener] Listening for commands on TCP {self.host}:{self.port}...")
-        while self.running:
-            try:
-                conn, addr = server.accept()
-            except socket.timeout:
-                continue
-            except Exception:
-                break
-
-            try:
-                conn.settimeout(2.0)
-                data = conn.recv(1024).decode('utf-8').strip()
-                if data:
-                    self.command_received.emit(data)
-                conn.sendall(b"OK\n")
-            except Exception as e:
-                print(f"[Listener] Connection error: {e}")
-            finally:
-                conn.close()
-
-        server.close()
-
-    def stop(self):
-        self.running = False
-        self.wait()
-
+from src.vision_pet.client.listener import BackendListener
+from src.vision_pet.client.utils import ANIMATIONS, SPRITE_WIDTH, SPRITE_HEIGHT
 
 class DesktopPet(QWidget):
     """The frameless, transparent QWidget desktop pet client."""
@@ -381,23 +282,3 @@ class DesktopPet(QWidget):
     def closeEvent(self, event):
         self.listener.stop()
         event.accept()
-
-
-def main():
-    app = QApplication(sys.argv)
-    
-    # Target path for spritesheet
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    spritesheet_path = os.path.join(base_dir, "robot", "spritesheet.webp")
-    
-    try:
-        anims = load_animations(spritesheet_path)
-    except Exception as e:
-        print(f"Error loading spritesheet assets: {e}")
-        return
-        
-    pet = DesktopPet(anims)
-    sys.exit(app.exec())
-
-if __name__ == "__main__":
-    main()
