@@ -57,16 +57,24 @@ vision-ai-pet/
 
 ## Running VISION
 
-To launch the desktop pet companion client on your screen:
+### Run Client & Backend Test Together
+To launch both the desktop pet client and the integration test backend stub concurrently in a single execution:
 ```bash
-python -m src.vision_pet.client
+python main.py
 ```
-This runs the PySide6 pet client and starts listening for socket commands on `127.0.0.1:5050`.
+This starts the pet window, waits 2 seconds for the listener to bind on port `5050`, and then launches the backend test script.
 
-To run the sample backend integration loop in a separate terminal:
-```bash
-python -m src.vision_pet.backend
-```
+### Run Individually
+If you want to run the components separately:
+
+1. **Launch the pet companion client:**
+   ```bash
+   python -m src.vision_pet.client
+   ```
+2. **Run the backend test stub in a separate terminal:**
+   ```bash
+   python -m src.vision_pet.backend
+   ```
 
 ---
 
