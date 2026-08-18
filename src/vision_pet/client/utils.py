@@ -9,7 +9,7 @@ COLS = 8
 ROWS = 9
 
 ANIMATIONS = {
-    "idle": {"row": 0, "frames": 6, "speed": 150, "loop": True},
+    "idle": {"row": 0, "frames": 1, "speed": 150, "loop": True},
     "running_right": {"row": 1, "frames": 8, "speed": 100, "loop": True},
     "running_left": {"row": 2, "frames": 8, "speed": 100, "loop": True},
     "wave": {"row": 3, "frames": 4, "speed": 180, "loop": False, "next": "idle"},
