@@ -4,13 +4,15 @@ from PySide6.QtCore import Qt, QTimer, QPoint
 from PySide6.QtGui import QAction
 
 from src.vision_pet.client.listener import BackendListener
-from src.vision_pet.client.utils import ANIMATIONS, SPRITE_WIDTH, SPRITE_HEIGHT
+from src.vision_pet.client.utils import ANIMATIONS
 
 class DesktopPet(QWidget):
     """The frameless, transparent QWidget desktop pet client."""
-    def __init__(self, anims):
+    def __init__(self, anims, width, height):
         super().__init__()
         self.anims = anims
+        self.sprite_width = width
+        self.sprite_height = height
 
         # Window styling: frameless, stay on top, hide taskbar entry (Tool window)
         self.setWindowFlags(
@@ -22,10 +24,10 @@ class DesktopPet(QWidget):
         
         # UI Elements
         self.label = QLabel(self)
-        self.label.setFixedSize(SPRITE_WIDTH, SPRITE_HEIGHT)
+        self.label.setFixedSize(self.sprite_width, self.sprite_height)
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setScaledContents(False)
-        self.setFixedSize(SPRITE_WIDTH, SPRITE_HEIGHT)
+        self.setFixedSize(self.sprite_width, self.sprite_height)
 
         # Physics & Position States
         self.x_pos = 200
@@ -72,8 +74,8 @@ class DesktopPet(QWidget):
     def snap_to_bottom(self):
         """Snaps the pet immediately to the bottom of the screen taskbar work-area."""
         avail_geo = QApplication.primaryScreen().availableGeometry()
-        self.x_pos = (avail_geo.width() - SPRITE_WIDTH) // 2 + avail_geo.x()
-        self.y_pos = avail_geo.height() - SPRITE_HEIGHT + avail_geo.y()
+        self.x_pos = (avail_geo.width() - self.sprite_width) // 2 + avail_geo.x()
+        self.y_pos = avail_geo.height() - self.sprite_height + avail_geo.y()
         self.move(int(self.x_pos), int(self.y_pos))
 
     def set_animation(self, name):
@@ -111,8 +113,8 @@ class DesktopPet(QWidget):
 
         avail_geo = QApplication.primaryScreen().availableGeometry()
         min_x = avail_geo.x()
-        max_x = avail_geo.x() + avail_geo.width() - SPRITE_WIDTH
-        max_y = avail_geo.y() + avail_geo.height() - SPRITE_HEIGHT
+        max_x = avail_geo.x() + avail_geo.width() - self.sprite_width
+        max_y = avail_geo.y() + avail_geo.height() - self.sprite_height
 
         # Apply gravity if pet is airborne
         if self.y_pos < max_y:
@@ -186,8 +188,8 @@ class DesktopPet(QWidget):
             
             # Constrain window inside primary monitor workspace bounds during drag
             avail_geo = QApplication.primaryScreen().availableGeometry()
-            new_x = max(avail_geo.x(), min(new_pos.x(), avail_geo.x() + avail_geo.width() - SPRITE_WIDTH))
-            new_y = max(avail_geo.y(), min(new_pos.y(), avail_geo.y() + avail_geo.height() - SPRITE_HEIGHT))
+            new_x = max(avail_geo.x(), min(new_pos.x(), avail_geo.x() + avail_geo.width() - self.sprite_width))
+            new_y = max(avail_geo.y(), min(new_pos.y(), avail_geo.y() + avail_geo.height() - self.sprite_height))
             
             self.x_pos = new_x
             self.y_pos = new_y

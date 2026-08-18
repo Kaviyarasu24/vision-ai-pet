@@ -1,31 +1,34 @@
 import sys
 import os
-
-# Disable high-DPI scaling rounding issues that cause size jitter/shaking on Windows
-os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
-
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from src.vision_pet.client.pet_widget import DesktopPet
 from src.vision_pet.client.utils import load_animations
 
 def main():
+    # Set high DPI scale factor rounding policy to Floor.
+    # This rounds fractional screen scales (like 125% or 150%) down to 1.0,
+    # ensuring integer scaling and eliminating coordinate rounding jitters
+    # and OS-vs-Qt scaling feedback loops.
+    QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.Floor)
+    
     app = QApplication(sys.argv)
     
     # Resolve assets path relative to this file
-    # __file__ is in d:\MCP\src\vision_pet\client\__main__.py
     client_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(client_dir, "..", "..", ".."))
     spritesheet_path = os.path.join(project_root, "assets", "robot", "spritesheet.webp")
     
     try:
-        anims = load_animations(spritesheet_path)
+        anims = load_animations(spritesheet_path, scale_factor=1.0)
     except Exception as e:
         print(f"Error loading spritesheet assets from path: {spritesheet_path}")
         print(f"Details: {e}")
         return 1
         
-    pet = DesktopPet(anims)
+    pet = DesktopPet(anims, 192, 208)
     sys.exit(app.exec())
 
 if __name__ == "__main__":

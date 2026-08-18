@@ -28,13 +28,18 @@ def pil_to_pixmap(pil_img):
     qimg = QImage(data, pil_img.size[0], pil_img.size[1], QImage.Format.Format_RGBA8888)
     return QPixmap.fromImage(qimg)
 
-def load_animations(sheet_path):
-    """Crops spritesheet frames using Pillow and loads them into a dictionary of QPixmaps."""
+def load_animations(sheet_path, scale_factor=1.0):
+    """Crops spritesheet frames using Pillow and loads them into a dictionary of QPixmaps, scaling them if necessary."""
     if not os.path.exists(sheet_path):
         raise FileNotFoundError(f"Spritesheet not found at: {sheet_path}")
         
     img = Image.open(sheet_path).convert("RGBA")
     anims = {}
+    
+    # Calculate target scaled sizes
+    target_w = int(SPRITE_WIDTH * scale_factor)
+    target_h = int(SPRITE_HEIGHT * scale_factor)
+    
     for name, config in ANIMATIONS.items():
         row = config["row"]
         frames_count = config["frames"]
@@ -47,6 +52,8 @@ def load_animations(sheet_path):
                 (row + 1) * SPRITE_HEIGHT
             )
             crop_frame = img.crop(box)
+            if scale_factor != 1.0:
+                crop_frame = crop_frame.resize((target_w, target_h), Image.Resampling.NEAREST)
             frames.append(pil_to_pixmap(crop_frame))
         anims[name] = frames
     return anims
