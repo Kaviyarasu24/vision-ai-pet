@@ -21,15 +21,14 @@ def main():
     project_root = os.path.abspath(os.path.join(client_dir, "..", "..", ".."))
     spritesheet_path = os.path.join(project_root, "assets", "robot", "spritesheet.webp")
     
-    scale_factor = 0.5
     try:
-        anims = load_animations(spritesheet_path, scale_factor=scale_factor)
+        anims = load_animations(spritesheet_path, scale_factor=1.0)
     except Exception as e:
         print(f"Error loading spritesheet assets from path: {spritesheet_path}")
         print(f"Details: {e}")
         return 1
         
-    pet = DesktopPet(anims, int(192 * scale_factor), int(208 * scale_factor))
+    pet = DesktopPet(anims, 192, 208)
     sys.exit(app.exec())
 
 if __name__ == "__main__":
