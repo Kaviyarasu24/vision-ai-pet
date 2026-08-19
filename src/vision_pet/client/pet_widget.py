@@ -5,6 +5,7 @@ from PySide6.QtGui import QAction
 
 from src.vision_pet.client.listener import BackendListener
 from src.vision_pet.client.utils import ANIMATIONS
+from src.vision_pet.client.monitor import SystemMonitor
 
 class DesktopPet(QWidget):
     """The frameless, transparent QWidget desktop pet client."""
@@ -35,6 +36,8 @@ class DesktopPet(QWidget):
         self.vx = 0
         self.vy = 0
         self.gravity = 0.8
+        self.gravity_enabled = False  # Set to False by default so it can be placed freely on the screen
+        self.wander_direction_y = 0
         self.is_dragging = False
         self.drag_offset = QPoint()
 
@@ -67,8 +70,28 @@ class DesktopPet(QWidget):
         self.listener.command_received.connect(self.handle_backend_command)
         self.listener.start()
 
-        # Initial snap to bottom of desktop screen
-        self.snap_to_bottom()
+        # Initialize system metrics state
+        self.latest_metrics = {
+            "cpu": 0.0,
+            "ram": 0.0,
+            "battery": 100,
+            "is_charging": True,
+            "wifi_status": "Disconnected",
+            "wifi_name": None,
+            "bluetooth": "Unknown"
+        }
+        self.backend_override = False
+
+        # Initialize background system monitor
+        self.monitor = SystemMonitor()
+        self.monitor.metrics_updated.connect(self.handle_system_metrics)
+        self.monitor.start()
+
+        # Initial placement on desktop screen
+        if self.gravity_enabled:
+            self.snap_to_bottom()
+        else:
+            self.snap_to_center()
         self.show()
 
     def snap_to_bottom(self):
@@ -76,6 +99,13 @@ class DesktopPet(QWidget):
         avail_geo = QApplication.primaryScreen().availableGeometry()
         self.x_pos = (avail_geo.width() - self.sprite_width) // 2 + avail_geo.x()
         self.y_pos = avail_geo.height() - self.sprite_height + avail_geo.y()
+        self.move(int(self.x_pos), int(self.y_pos))
+
+    def snap_to_center(self):
+        """Snaps the pet immediately to the center of the screen."""
+        avail_geo = QApplication.primaryScreen().availableGeometry()
+        self.x_pos = (avail_geo.width() - self.sprite_width) // 2 + avail_geo.x()
+        self.y_pos = (avail_geo.height() - self.sprite_height) // 2 + avail_geo.y()
         self.move(int(self.x_pos), int(self.y_pos))
 
     def set_animation(self, name):
@@ -97,6 +127,8 @@ class DesktopPet(QWidget):
                 self.current_frame = 0
             else:
                 next_state = config.get("next", "idle")
+                # Clear manual backend/UI override when a non-looping animation completes
+                self.backend_override = False
                 self.set_animation(next_state)
                 return
         self.update_sprite_display()
@@ -106,6 +138,38 @@ class DesktopPet(QWidget):
         pixmap = self.anims[self.current_anim][self.current_frame]
         self.label.setPixmap(pixmap)
 
+    def handle_system_metrics(self, metrics):
+        """Processes live system metrics and updates pet visual state accordingly."""
+        self.latest_metrics = metrics
+        
+        # If backend or context menu override is active, skip system monitor reactions
+        if self.backend_override:
+            return
+
+        # Determine reaction animation
+        # Wi-Fi Disconnected -> "waiting" (looking for connection)
+        if metrics["wifi_status"] == "Disconnected":
+            self.set_animation("waiting")
+        # CPU > 75% -> "running" (computing intensely)
+        elif metrics["cpu"] > 75.0:
+            self.set_animation("running")
+        # Battery low and unplugged (< 20%) -> "failed" (out of charge)
+        elif metrics["battery"] < 20 and not metrics["is_charging"]:
+            self.set_animation("failed")
+        # Otherwise, if in a warning state but hardware state is now normal, clear it
+        else:
+            if self.current_anim in ["waiting", "running", "failed"]:
+                if self.mode == "idle":
+                    self.set_animation("idle")
+                else:
+                    # Let wander logic/physics naturally handle animations
+                    pass
+
+    def trigger_manual_animation(self, name):
+        """Triggers manual user/backend animation override."""
+        self.backend_override = True
+        self.set_animation(name)
+
     def update_physics_loop(self):
         """Main engine tick running at 60 FPS. Handles gravity, bounds, and wander behaviors."""
         if self.is_dragging:
@@ -114,48 +178,86 @@ class DesktopPet(QWidget):
         avail_geo = QApplication.primaryScreen().availableGeometry()
         min_x = avail_geo.x()
         max_x = avail_geo.x() + avail_geo.width() - self.sprite_width
+        min_y = avail_geo.y()
         max_y = avail_geo.y() + avail_geo.height() - self.sprite_height
 
-        # Apply gravity if pet is airborne
-        if self.y_pos < max_y:
-            self.vy += self.gravity
-            self.y_pos += self.vy
-            if self.y_pos >= max_y:
+        # Apply gravity/airborne check if gravity is enabled
+        if self.gravity_enabled:
+            if self.y_pos < max_y:
+                self.vy += self.gravity
+                self.y_pos += self.vy
+                if self.y_pos >= max_y:
+                    self.y_pos = max_y
+                    self.vy = 0
+                    if self.current_anim == "jump":
+                        self.set_animation("idle")
+            else:
                 self.y_pos = max_y
                 self.vy = 0
-                if self.current_anim == "jump":
-                    self.set_animation("idle")
         else:
-            self.y_pos = max_y
-            self.vy = 0
+            # Maintain screen boundary safety when floating/dragging without gravity
+            if self.y_pos < min_y:
+                self.y_pos = min_y
+                self.vy = 0
+            elif self.y_pos > max_y:
+                self.y_pos = max_y
+                self.vy = 0
 
         # Autonomous Wander Logic
-        if self.mode == "wander" and self.y_pos == max_y:
+        if self.mode == "wander" and (not self.gravity_enabled or self.y_pos == max_y):
             self.wander_timer -= 1
             if self.wander_timer <= 0:
                 self.wander_timer = random.randint(60, 180) # 1 - 3 seconds
-                roll = random.random()
-                if roll < 0.4:
+                
+                # Roll for horizontal movement
+                roll_x = random.random()
+                if roll_x < 0.4:
                     self.wander_direction = 0
-                    self.set_animation("idle")
-                elif roll < 0.7:
+                elif roll_x < 0.7:
                     self.wander_direction = -1
-                    self.set_animation("running_left")
                 else:
                     self.wander_direction = 1
-                    self.set_animation("running_right")
 
-                # 15% chance to jump
-                if random.random() < 0.15:
+                # Roll for vertical movement if floating
+                if not self.gravity_enabled:
+                    roll_y = random.random()
+                    if roll_y < 0.4:
+                        self.wander_direction_y = 0
+                    elif roll_y < 0.7:
+                        self.wander_direction_y = -1
+                    else:
+                        self.wander_direction_y = 1
+                else:
+                    self.wander_direction_y = 0
+
+                # Determine sprite animation
+                if self.wander_direction == -1:
+                    self.set_animation("running_left")
+                elif self.wander_direction == 1:
+                    self.set_animation("running_right")
+                else:
+                    if not self.gravity_enabled and self.wander_direction_y != 0:
+                        self.set_animation("waiting" if random.random() < 0.5 else "idle")
+                    else:
+                        self.set_animation("idle")
+
+                # 15% chance to jump (only on taskbar floor)
+                if self.gravity_enabled and random.random() < 0.15:
                     self.vy = -10
                     self.set_animation("jump")
 
-            # Execute walk movement
-            if self.wander_direction != 0 and self.current_anim != "jump":
-                self.vx = self.wander_direction * 1.5
-                self.x_pos += self.vx
+            # Execute movement
+            if self.gravity_enabled:
+                if self.wander_direction != 0 and self.current_anim != "jump":
+                    self.vx = self.wander_direction * 1.5
+                    self.x_pos += self.vx
+                else:
+                    self.vx = 0
             else:
-                self.vx = 0
+                self.vx = self.wander_direction * 1.2
+                self.vy = self.wander_direction_y * 1.2
+                self.x_pos += self.vx
+                self.y_pos += self.vy
 
             # Stay inside work area bounds
             if self.x_pos < min_x:
@@ -166,6 +268,14 @@ class DesktopPet(QWidget):
                 self.x_pos = max_x
                 self.wander_direction = -1
                 self.set_animation("running_left")
+
+            if not self.gravity_enabled:
+                if self.y_pos < min_y:
+                    self.y_pos = min_y
+                    self.wander_direction_y = 1
+                elif self.y_pos > max_y:
+                    self.y_pos = max_y
+                    self.wander_direction_y = -1
 
         self.move(int(self.x_pos), int(self.y_pos))
 
@@ -223,15 +333,46 @@ class DesktopPet(QWidget):
             }
         """)
 
+        # System Monitoring Dashboard (Live Stats Labels)
+        stats_title = QAction("📋 System Monitor Info", self)
+        stats_title.setEnabled(False)
+        menu.addAction(stats_title)
+        
+        cpu_act = QAction(f"  ⚙️ CPU Usage: {self.latest_metrics['cpu']:.1f}%", self)
+        cpu_act.setEnabled(False)
+        menu.addAction(cpu_act)
+
+        bat_text = f"  🔋 Battery: {self.latest_metrics['battery']}%"
+        if self.latest_metrics['is_charging']:
+            bat_text += " (Charging)"
+        else:
+            bat_text += " (Discharging)"
+        bat_act = QAction(bat_text, self)
+        bat_act.setEnabled(False)
+        menu.addAction(bat_act)
+
+        wifi_text = f"  📶 Wi-Fi: {self.latest_metrics['wifi_status']}"
+        if self.latest_metrics['wifi_name']:
+            wifi_text += f" ({self.latest_metrics['wifi_name']})"
+        wifi_act = QAction(wifi_text, self)
+        wifi_act.setEnabled(False)
+        menu.addAction(wifi_act)
+
+        bt_act = QAction(f"  🔵 Bluetooth: {self.latest_metrics['bluetooth']}", self)
+        bt_act.setEnabled(False)
+        menu.addAction(bt_act)
+
+        menu.addSeparator()
+
         # Quick Actions
         wave_act = QAction("👋 Wave", self)
-        wave_act.triggered.connect(lambda: self.set_animation("wave"))
+        wave_act.triggered.connect(lambda: self.trigger_manual_animation("wave"))
         
         pet_act = QAction("❤️ Pet (Beep!)", self)
-        pet_act.triggered.connect(lambda: self.set_animation("wave"))
+        pet_act.triggered.connect(lambda: self.trigger_manual_animation("wave"))
 
         failed_act = QAction("⚠️ Simulate Error", self)
-        failed_act.triggered.connect(lambda: self.set_animation("failed"))
+        failed_act.triggered.connect(lambda: self.trigger_manual_animation("failed"))
 
         exit_act = QAction("❌ Close Companion", self)
         exit_act.triggered.connect(QApplication.instance().quit)
@@ -258,15 +399,41 @@ class DesktopPet(QWidget):
         mode_menu.addAction(wander_act)
         mode_menu.addAction(idle_act)
 
+        # Screen Placement / Physics select
+        placement_menu = menu.addMenu("📍 Screen Placement")
+        placement_menu.setStyleSheet(menu.styleSheet())
+
+        free_act = QAction("Float Freely", self)
+        free_act.setCheckable(True)
+        free_act.setChecked(not self.gravity_enabled)
+        free_act.triggered.connect(lambda: self.set_gravity_enabled(False))
+
+        taskbar_act = QAction("Constrain to Taskbar", self)
+        taskbar_act.setCheckable(True)
+        taskbar_act.setChecked(self.gravity_enabled)
+        taskbar_act.triggered.connect(lambda: self.set_gravity_enabled(True))
+
+        placement_menu.addAction(free_act)
+        placement_menu.addAction(taskbar_act)
+
         menu.addSeparator()
         menu.addAction(exit_act)
         menu.exec(self.mapToGlobal(pos))
+
+    def set_gravity_enabled(self, enabled):
+        self.gravity_enabled = enabled
+        if enabled:
+            # Let it fall down naturally if enabled
+            self.vy = 0
+        else:
+            self.wander_direction_y = 0
 
     def set_mode_str(self, val):
         self.mode = val
         if val == "idle":
             self.set_animation("idle")
             self.wander_direction = 0
+            self.wander_direction_y = 0
 
     # Backend Connection commands
     def handle_backend_command(self, cmd_str):
@@ -278,11 +445,16 @@ class DesktopPet(QWidget):
 
             if target == "animation":
                 if val in self.anims:
+                    # Set manual override when backend requests a specific animation
+                    self.backend_override = True
                     self.set_animation(val)
             elif target == "mode":
                 if val in ["wander", "idle"]:
+                    # Reset manual override when backend changes mode
+                    self.backend_override = False
                     self.set_mode_str(val)
 
     def closeEvent(self, event):
         self.listener.stop()
+        self.monitor.stop()
         event.accept()
