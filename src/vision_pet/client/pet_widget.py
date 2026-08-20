@@ -47,7 +47,7 @@ class DesktopPet(QWidget):
         self.wander_direction = 0  # -1: left, 1: right, 0: idle
 
         # Animation states
-        self.current_anim = "idle"
+        self.current_anim = "welcoming"
         self.current_frame = 0
         self.update_sprite_display()
 
@@ -147,23 +147,42 @@ class DesktopPet(QWidget):
             return
 
         # Determine reaction animation
-        # Wi-Fi Disconnected -> "waiting" (looking for connection)
+        # Wi-Fi Disconnected -> "wifi_disconnected"
         if metrics["wifi_status"] == "Disconnected":
-            self.set_animation("waiting")
+            self.set_animation("wifi_disconnected")
         # CPU > 75% -> "running" (computing intensely)
         elif metrics["cpu"] > 75.0:
             self.set_animation("running")
-        # Battery low and unplugged (< 20%) -> "failed" (out of charge)
+        # Battery low and unplugged (< 20%) -> "need_charging"
         elif metrics["battery"] < 20 and not metrics["is_charging"]:
-            self.set_animation("failed")
-        # Otherwise, if in a warning state but hardware state is now normal, clear it
+            self.set_animation("need_charging")
+        # Charging but not full -> "charging"
+        elif metrics["is_charging"] and metrics["battery"] < 100:
+            self.set_animation("charging")
+        # Battery fully charged and plugged in -> "charged_filled"
+        elif metrics["is_charging"] and metrics["battery"] == 100:
+            self.set_animation("charged_filled")
+        # Battery fully charged but unplugged -> "charged_disconnected"
+        elif not metrics["is_charging"] and metrics["battery"] == 100:
+            self.set_animation("charged_disconnected")
+        # Otherwise, check night status for sleep/tired state, or revert to normal idle/wander
         else:
-            if self.current_anim in ["waiting", "running", "failed"]:
+            import datetime
+            hour = datetime.datetime.now().hour
+            is_night = (hour >= 22 or hour < 6)
+            
+            if is_night:
                 if self.mode == "idle":
-                    self.set_animation("idle")
+                    self.set_animation("sleeping")
                 else:
-                    # Let wander logic/physics naturally handle animations
-                    pass
+                    self.set_animation("very_tired")
+            else:
+                if self.current_anim in ["wifi_disconnected", "running", "failed", "charging", "charged_disconnected", "charged_filled", "need_charging", "wifi_connected", "sleeping", "very_tired", "need_rest", "need_to_go_bed"]:
+                    if self.mode == "idle":
+                        self.set_animation("idle")
+                    else:
+                        # Let wander logic/physics naturally handle animations
+                        pass
 
     def trigger_manual_animation(self, name):
         """Triggers manual user/backend animation override."""
@@ -380,6 +399,44 @@ class DesktopPet(QWidget):
         menu.addAction(wave_act)
         menu.addAction(pet_act)
         menu.addAction(failed_act)
+        
+        # Triggerable Animations Submenu
+        anim_menu = menu.addMenu("🎭 Trigger Animation")
+        anim_menu.setStyleSheet(menu.styleSheet())
+        
+        for anim_name in ["welcoming", "charging", "charged_disconnected", "charged_filled", "need_charging", "wifi_connected", "wifi_disconnected", "muted", "unmuted", "very_tired", "need_rest", "sleeping", "need_to_go_bed"]:
+            label = anim_name.replace("_", " ").capitalize()
+            if anim_name == "welcoming":
+                label = "👋 Welcoming"
+            elif anim_name == "charging":
+                label = "⚡ Charging"
+            elif anim_name == "charged_disconnected":
+                label = "🔌 Charged & Disconnected"
+            elif anim_name == "charged_filled":
+                label = "🔋 Charged & Filled"
+            elif anim_name == "need_charging":
+                label = "🪫 Need Charging"
+            elif anim_name == "wifi_connected":
+                label = "📶 Wi-Fi Connected"
+            elif anim_name == "wifi_disconnected":
+                label = "🚫 Wi-Fi Disconnected"
+            elif anim_name == "muted":
+                label = "🔇 Muted"
+            elif anim_name == "unmuted":
+                label = "🔊 Unmuted"
+            elif anim_name == "very_tired":
+                label = "💤 Very Tired"
+            elif anim_name == "need_rest":
+                label = "🥱 Need Rest"
+            elif anim_name == "sleeping":
+                label = "😴 Sleeping"
+            elif anim_name == "need_to_go_bed":
+                label = "🛌 Need to go to Bed"
+                
+            act = QAction(label, self)
+            act.triggered.connect(lambda checked=False, name=anim_name: self.trigger_manual_animation(name))
+            anim_menu.addAction(act)
+
         menu.addSeparator()
 
         # Behavior select

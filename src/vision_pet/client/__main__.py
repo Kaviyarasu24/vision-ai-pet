@@ -19,7 +19,19 @@ def main():
     # Resolve assets path relative to this file
     client_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(client_dir, "..", "..", ".."))
-    spritesheet_path = os.path.join(project_root, "assets", "robot", "spritesheet.webp")
+    # Load spritesheet path dynamically from pet.json configuration
+    pet_json_path = os.path.join(project_root, "assets", "robot", "pet.json")
+    spritesheet_name = "combined_spritesheet.webp"
+    if os.path.exists(pet_json_path):
+        try:
+            import json
+            with open(pet_json_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+                spritesheet_name = metadata.get("spritesheetPath", spritesheet_name)
+        except Exception as e:
+            print(f"Warning: Could not parse pet.json: {e}")
+            
+    spritesheet_path = os.path.join(project_root, "assets", "robot", spritesheet_name)
     
     scale_factor = 0.7
     try:
