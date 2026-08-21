@@ -160,18 +160,18 @@ class DesktopPet(QWidget):
         # Charging but not full -> "charging" or "idle_charged"
         elif metrics["is_charging"] and metrics["battery"] < 100:
             if metrics["battery"] > 85:
-                if self.current_anim != "idle_charged":
+                if self.current_anim not in ["idle_charged", "running_left", "running_right", "jump"]:
                     self.set_animation("idle_charged")
             else:
-                if self.current_anim != "charging":
+                if self.current_anim not in ["charging", "running_left", "running_right", "jump"]:
                     self.set_animation("charging")
         # Battery fully charged and plugged in -> "charged_filled"
         elif metrics["is_charging"] and metrics["battery"] == 100:
-            if self.current_anim not in ["charged_filled", "charged_disconnected"]:
+            if self.current_anim not in ["charged_filled", "charged_disconnected", "running_left", "running_right", "jump"]:
                 self.set_animation("charged_filled")
         # Battery fully charged but unplugged -> "charged_disconnected"
         elif not metrics["is_charging"] and metrics["battery"] == 100:
-            if self.current_anim not in ["charged_disconnected"]:
+            if self.current_anim not in ["charged_disconnected", "running_left", "running_right", "jump"]:
                 self.set_animation("charged_disconnected")
         # Otherwise, check night status for sleep/tired state, or revert to normal idle/wander
         else:
@@ -228,7 +228,7 @@ class DesktopPet(QWidget):
                 self.vy = 0
 
         # Autonomous Wander Logic
-        is_special_state = self.current_anim not in ["idle", "running_right", "running_left", "waiting", "running"]
+        is_special_state = self.current_anim not in ["idle", "running_right", "running_left", "waiting", "running", "charging", "idle_charged", "charged_disconnected"]
 
         if self.mode == "wander" and not self.backend_override and not is_special_state and (not self.gravity_enabled or self.y_pos == max_y):
             self.wander_timer -= 1
@@ -262,10 +262,16 @@ class DesktopPet(QWidget):
                 elif self.wander_direction == 1:
                     self.set_animation("running_right")
                 else:
-                    if not self.gravity_enabled and self.wander_direction_y != 0:
-                        self.set_animation("waiting" if random.random() < 0.5 else "idle")
+                    if self.latest_metrics.get("is_charging", False):
+                        if self.latest_metrics.get("battery", 100) > 85:
+                            self.set_animation("idle_charged")
+                        else:
+                            self.set_animation("charging")
                     else:
-                        self.set_animation("idle")
+                        if not self.gravity_enabled and self.wander_direction_y != 0:
+                            self.set_animation("waiting" if random.random() < 0.5 else "idle")
+                        else:
+                            self.set_animation("idle")
 
                 # 15% chance to jump (only on taskbar floor)
                 if self.gravity_enabled and random.random() < 0.15:
