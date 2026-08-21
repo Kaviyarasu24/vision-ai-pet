@@ -17,8 +17,8 @@ This document lists the visual previews and configuration parameters for all **2
 | **6** | ![Row 6](./assets/robot/temp_rows/row_6.png) | `waiting` | 6 | 180 | True | -- | Idle, awaiting input or response pending. |
 | **7** | ![Row 7](./assets/robot/temp_rows/row_7.png) | `running` | 6 | 100 | True | -- | General/alt movement loop. |
 | **8** | ![Row 8](./assets/robot/temp_rows/row_8.png) | `review` | 6 | 200 | False | `idle` | Thinking/reviewing pose after an action. |
-| **9** | ![Row 9](./assets/robot/temp_rows/row_9.png) | `charging` | 6 | 140 | True | `idle_charged` | Plugged in and actively drawing power. |
-| **10** | ![Row 10](./assets/robot/temp_rows/row_10.png) | `charged_disconnected` | 5 | 200 | True | `idle` | Battery full, cable unplugged, content state. |
+| **9** | ![Row 9](./assets/robot/temp_rows/row_9.png) | `charging` | 6 | 140 | True | `idle_charged` | Plugged in and actively drawing power (loops while battery <= 85%). |
+| **10** | ![Row 10](./assets/robot/temp_rows/row_10.png) | `charged_disconnected` | 5 | 200 | True | `idle` | Cable unplugged content state, or plugged-in standby state (when battery > 85%). |
 | **11** | ![Row 11](./assets/robot/temp_rows/row_11.png) | `charged_filled` | 6 | 130 | False | `charged_disconnected` | One-shot fill-up animation when charge completes. |
 | **12** | ![Row 12](./assets/robot/temp_rows/row_12.png) | `need_charging` | 6 | 160 | True | `charging` | Low battery warning, prompts user to plug in. |
 | **13** | ![Row 13](./assets/robot/temp_rows/row_13.png) | `wifi_connected` | 5 | 150 | False | `idle` | Signal-acquired confirmation after reconnect. |

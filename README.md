@@ -113,8 +113,8 @@ The spritesheet is configured via the `ANIMATIONS` dictionary in [`utils.py`](fi
 | **6** | `waiting` | 6 | 180 | True | -- | Idle, awaiting input or response pending. |
 | **7** | `running` | 6 | 100 | True | -- | General/alt movement loop. |
 | **8** | `review` | 6 | 200 | False | `idle` | Thinking/reviewing pose after an action. |
-| **9** | `charging` | 6 | 140 | True | `idle_charged` | Plugged in and actively drawing power. |
-| **10** | `charged_disconnected` | 5 | 200 | True | `idle` | Battery full, cable unplugged, content state. |
+| **9** | `charging` | 6 | 140 | True | `idle_charged` | Plugged in and actively drawing power (loops while battery <= 85%). |
+| **10** | `charged_disconnected` | 5 | 200 | True | `idle` | Cable unplugged content state, or plugged-in standby state (when battery > 85%). |
 | **11** | `charged_filled` | 6 | 130 | False | `charged_disconnected` | One-shot fill-up animation when charge completes. |
 | **12** | `need_charging` | 6 | 160 | True | `charging` | Low battery warning (< 20%), prompts user to plug in. |
 | **13** | `wifi_connected` | 5 | 150 | False | `idle` | Signal-acquired confirmation after reconnect. |
