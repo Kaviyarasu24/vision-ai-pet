@@ -57,6 +57,8 @@ def main():
                 elif power_plugged:
                     if battery_percent == 100:
                         send_command("animation:charged_filled")
+                    elif battery_percent > 85:
+                        send_command("animation:idle_charged")
                     else:
                         send_command("animation:charging")
                 else:
@@ -77,6 +79,8 @@ def main():
                 elif power_plugged:
                     if battery_percent == 100:
                         send_command("animation:charged_filled")
+                    elif battery_percent > 85:
+                        send_command("animation:idle_charged")
                     else:
                         send_command("animation:charging")
                 
@@ -91,6 +95,8 @@ def main():
                 if online:
                     if battery_percent == 100:
                         send_command("animation:charged_filled")
+                    elif battery_percent > 85:
+                        send_command("animation:idle_charged")
                     else:
                         send_command("animation:charging")
                 else:
@@ -123,6 +129,12 @@ def main():
                 print(f"[Event] Low battery warning! Battery at {battery_percent}%")
                 if online:
                     send_command("animation:need_charging")
+
+            # Event 7: Battery Charge Reached 85% while plugged in
+            elif power_plugged and battery_percent > 85 and last_battery_percent <= 85:
+                print(f"[Event] Battery charged above 85% ({battery_percent}%)")
+                if online:
+                    send_command("animation:idle_charged")
                 
             # Update state history
             last_power_plugged = power_plugged

@@ -155,16 +155,24 @@ class DesktopPet(QWidget):
             self.set_animation("running")
         # Battery low and unplugged (< 20%) -> "need_charging"
         elif metrics["battery"] < 20 and not metrics["is_charging"]:
-            self.set_animation("need_charging")
-        # Charging but not full -> "charging"
+            if self.current_anim not in ["need_charging", "charging", "idle_charged"]:
+                self.set_animation("need_charging")
+        # Charging but not full -> "charging" or "idle_charged"
         elif metrics["is_charging"] and metrics["battery"] < 100:
-            self.set_animation("charging")
+            if metrics["battery"] > 85:
+                if self.current_anim != "idle_charged":
+                    self.set_animation("idle_charged")
+            else:
+                if self.current_anim != "charging":
+                    self.set_animation("charging")
         # Battery fully charged and plugged in -> "charged_filled"
         elif metrics["is_charging"] and metrics["battery"] == 100:
-            self.set_animation("charged_filled")
+            if self.current_anim not in ["charged_filled", "charged_disconnected"]:
+                self.set_animation("charged_filled")
         # Battery fully charged but unplugged -> "charged_disconnected"
         elif not metrics["is_charging"] and metrics["battery"] == 100:
-            self.set_animation("charged_disconnected")
+            if self.current_anim not in ["charged_disconnected"]:
+                self.set_animation("charged_disconnected")
         # Otherwise, check night status for sleep/tired state, or revert to normal idle/wander
         else:
             import datetime
@@ -175,14 +183,11 @@ class DesktopPet(QWidget):
                 if self.mode == "idle":
                     self.set_animation("sleeping")
                 else:
-                    self.set_animation("very_tired")
+                    if self.current_anim not in ["very_tired", "need_rest", "sleeping"]:
+                        self.set_animation("very_tired")
             else:
-                if self.current_anim in ["wifi_disconnected", "running", "failed", "charging", "charged_disconnected", "charged_filled", "need_charging", "wifi_connected", "sleeping", "very_tired", "need_rest", "need_to_go_bed"]:
-                    if self.mode == "idle":
-                        self.set_animation("idle")
-                    else:
-                        # Let wander logic/physics naturally handle animations
-                        pass
+                if self.current_anim in ["wifi_disconnected", "running", "failed", "charging", "charged_disconnected", "charged_filled", "need_charging", "wifi_connected", "sleeping", "very_tired", "need_rest", "need_to_go_bed", "idle_charged"]:
+                    self.set_animation("idle")
 
     def trigger_manual_animation(self, name):
         """Triggers manual user/backend animation override."""
@@ -223,7 +228,9 @@ class DesktopPet(QWidget):
                 self.vy = 0
 
         # Autonomous Wander Logic
-        if self.mode == "wander" and (not self.gravity_enabled or self.y_pos == max_y):
+        is_special_state = self.current_anim not in ["idle", "running_right", "running_left", "waiting", "running"]
+
+        if self.mode == "wander" and not self.backend_override and not is_special_state and (not self.gravity_enabled or self.y_pos == max_y):
             self.wander_timer -= 1
             if self.wander_timer <= 0:
                 self.wander_timer = random.randint(60, 180) # 1 - 3 seconds
@@ -295,6 +302,12 @@ class DesktopPet(QWidget):
                 elif self.y_pos > max_y:
                     self.y_pos = max_y
                     self.wander_direction_y = -1
+        else:
+            self.wander_direction = 0
+            self.wander_direction_y = 0
+            self.vx = 0
+            if not self.gravity_enabled or self.y_pos == max_y:
+                self.vy = 0
 
         self.move(int(self.x_pos), int(self.y_pos))
 

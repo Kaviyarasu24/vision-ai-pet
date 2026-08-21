@@ -121,8 +121,8 @@ The spritesheet is configured via the `ANIMATIONS` dictionary in [`utils.py`](fi
 | **14** | `wifi_disconnected` | 5 | 180 | True | -- | Connection lost / offline state indicator. |
 | **15** | `muted` | 5 | 200 | True | -- | Sound turned off, persists until unmuted. |
 | **16** | `unmuted` | 5 | 150 | False | `idle` | Sound restored confirmation. |
-| **17** | `very_tired` | 6 | 220 | True | `need_rest` | Extended inactivity or low-energy state. |
-| **18** | `need_rest` | 6 | 220 | True | `sleeping` | Prompts user that pet wants to sleep soon. |
+| **17** | `very_tired` | 6 | 220 | False | `need_rest` | Extended inactivity or low-energy state. |
+| **18** | `need_rest` | 6 | 220 | False | `sleeping` | Prompts user that pet wants to sleep soon. |
 | **19** | `sleeping` | 6 | 260 | True | -- | Idle-timeout or scheduled sleep state (10 PM to 6 AM). |
 | **20** | `need_to_go_bed` | 5 | 200 | False | `sleeping` | Bedtime reminder before transitioning to sleep. |
 | **21** | `welcoming` | 6 | 130 | False | `idle` | App-open or user-return greeting. |

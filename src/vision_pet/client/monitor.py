@@ -34,6 +34,13 @@ class SystemMonitor(QThread):
 
             # Query Wi-Fi info
             wifi_status, wifi_name = self.get_wifi_info()
+            
+            # If netsh reports disconnected, verify general internet connectivity (e.g. Ethernet)
+            if wifi_status != "Connected":
+                if self.check_online():
+                    wifi_status = "Connected"
+                    if not wifi_name:
+                        wifi_name = "Ethernet / Wired"
 
             # Query Bluetooth status
             bluetooth = self.get_bluetooth_status()
@@ -57,6 +64,17 @@ class SystemMonitor(QThread):
                 self.msleep(100)
 
         print("[SystemMonitor] Thread stopped.")
+
+    def check_online(self):
+        """Checks if the system is connected to the internet using a lightweight socket test."""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1.0)
+            s.connect(("8.8.8.8", 53))
+            s.close()
+            return True
+        except Exception:
+            return False
 
     def stop(self):
         self.running = False

@@ -25,8 +25,8 @@ This document lists the visual previews and configuration parameters for all **2
 | **14** | ![Row 14](./assets/robot/temp_rows/row_14.png) | `wifi_disconnected` | 5 | 180 | True | -- | Connection lost / offline state indicator. |
 | **15** | ![Row 15](./assets/robot/temp_rows/row_15.png) | `muted` | 5 | 200 | True | -- | Sound turned off, persists until unmuted. |
 | **16** | ![Row 16](./assets/robot/temp_rows/row_16.png) | `unmuted` | 5 | 150 | False | `idle` | Sound restored confirmation. |
-| **17** | ![Row 17](./assets/robot/temp_rows/row_17.png) | `very_tired` | 6 | 220 | True | `need_rest` | Extended inactivity or low-energy state. |
-| **18** | ![Row 18](./assets/robot/temp_rows/row_18.png) | `need_rest` | 6 | 220 | True | `sleeping` | Prompts user that pet wants to sleep soon. |
+| **17** | ![Row 17](./assets/robot/temp_rows/row_17.png) | `very_tired` | 6 | 220 | False | `need_rest` | Extended inactivity or low-energy state. |
+| **18** | ![Row 18](./assets/robot/temp_rows/row_18.png) | `need_rest` | 6 | 220 | False | `sleeping` | Prompts user that pet wants to sleep soon. |
 | **19** | ![Row 19](./assets/robot/temp_rows/row_19.png) | `sleeping` | 6 | 260 | True | -- | Idle-timeout or scheduled sleep state. |
 | **20** | ![Row 20](./assets/robot/temp_rows/row_20.png) | `need_to_go_bed` | 5 | 200 | False | `sleeping` | Bedtime reminder before transitioning to sleep. |
 | **21** | ![Row 21](./assets/robot/temp_rows/row_21.png) | `welcoming` | 6 | 130 | False | `idle` | App-open or user-return greeting. |
