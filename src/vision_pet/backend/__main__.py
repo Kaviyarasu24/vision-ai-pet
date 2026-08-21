@@ -5,15 +5,24 @@ from src.vision_pet.backend.stub import send_command
 
 def check_online():
     """Checks if the system is currently connected to the internet."""
-    try:
-        # Try to connect to Google's public DNS (port 53)
-        socket.setdefaulttimeout(1.5)
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect(("8.8.8.8", 53))
-        s.close()
-        return True
-    except Exception:
-        return False
+    # 1. Try resolving popular domains
+    for domain in ["www.google.com", "www.microsoft.com"]:
+        try:
+            socket.gethostbyname(domain)
+            return True
+        except Exception:
+            pass
+    # 2. Fallback to connecting to a public IP on port 80 (HTTP)
+    for ip in ["1.1.1.1", "8.8.8.8"]:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1.0)
+            s.connect((ip, 80))
+            s.close()
+            return True
+        except Exception:
+            pass
+    return False
 
 def main():
     print("==================================================")

@@ -66,15 +66,25 @@ class SystemMonitor(QThread):
         print("[SystemMonitor] Thread stopped.")
 
     def check_online(self):
-        """Checks if the system is connected to the internet using a lightweight socket test."""
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(1.0)
-            s.connect(("8.8.8.8", 53))
-            s.close()
-            return True
-        except Exception:
-            return False
+        """Checks if the system is connected to the internet."""
+        # 1. Try resolving popular domains
+        for domain in ["www.google.com", "www.microsoft.com"]:
+            try:
+                socket.gethostbyname(domain)
+                return True
+            except Exception:
+                pass
+        # 2. Fallback to connecting to a public IP on port 80 (HTTP)
+        for ip in ["1.1.1.1", "8.8.8.8"]:
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(1.0)
+                s.connect((ip, 80))
+                s.close()
+                return True
+            except Exception:
+                pass
+        return False
 
     def stop(self):
         self.running = False
