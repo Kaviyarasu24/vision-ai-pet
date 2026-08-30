@@ -1,11 +1,14 @@
 import random
+import time
+import datetime
 from PySide6.QtWidgets import QWidget, QLabel, QMenu, QApplication
 from PySide6.QtCore import Qt, QTimer, QPoint
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QGuiApplication
 
 from src.vision_pet.client.listener import BackendListener
 from src.vision_pet.client.utils import ANIMATIONS
 from src.vision_pet.client.monitor import SystemMonitor
+from src.vision_pet.client.speech_bubble import SpeechBubble
 
 class DesktopPet(QWidget):
     """The frameless, transparent QWidget desktop pet client."""
@@ -56,10 +59,21 @@ class DesktopPet(QWidget):
         self.anim_timer.timeout.connect(self.advance_animation_frame)
         self.anim_timer.start(ANIMATIONS[self.current_anim]["speed"])
 
-        # Physics/Wander update loop (runs at ~60fps)
+        # Physics/Wander update loop.
+        # Runs at ~60fps (16ms) only while the pet is actually moving; drops to
+        # ~15fps (66ms) when static/idle to cut idle CPU. Motion speed and wander
+        # timing are kept identical by driving them from elapsed milliseconds, not
+        # tick counts, so the slower cadence changes nothing visually.
+        self._phys_fast_ms = 16
+        self._phys_idle_ms = 66
+        self._phys_interval = self._phys_fast_ms
+        # Cached available screen geometry (querying it 60x/sec is wasteful; it
+        # only changes on resolution/taskbar changes, so refresh ~1x/sec).
+        self._geo_cache = None
+        self._geo_ttl = 0
         self.physics_timer = QTimer(self)
         self.physics_timer.timeout.connect(self.update_physics_loop)
-        self.physics_timer.start(16)
+        self.physics_timer.start(self._phys_interval)
 
         # Context Menu
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -78,14 +92,32 @@ class DesktopPet(QWidget):
             "is_charging": True,
             "wifi_status": "Disconnected",
             "wifi_name": None,
-            "bluetooth": "Unknown"
+            "bluetooth": "Unknown",
+            "muted": None,
         }
         self.backend_override = False
+
+        # --- Single-source-of-truth reaction state ---
+        # The client is now the ONLY monitor (the standalone backend daemon is
+        # legacy/optional), so it must detect transition events itself instead
+        # of relying on a second process. These track prior samples so we can
+        # fire one-shot confirmation animations on edges.
+        self._metrics_primed = False      # first sample just sets a baseline
+        self._bedtime_announced = False    # need_to_go_bed fires once per night
+
+        # Inactivity tracking drives the very_tired -> need_rest -> sleeping
+        # sequence during the day (docs described it; only clock-based night
+        # mode existed before).
+        self.last_activity = time.monotonic()
+        self.INACTIVITY_SLEEP_S = 300      # 5 minutes idle -> drift to sleep
 
         # Initialize background system monitor
         self.monitor = SystemMonitor()
         self.monitor.metrics_updated.connect(self.handle_system_metrics)
         self.monitor.start()
+
+        # Speech bubble for AI/`say:` messages (floats above the pet)
+        self.speech_bubble = SpeechBubble()
 
         # Initial placement on desktop screen
         if self.gravity_enabled:
@@ -94,16 +126,42 @@ class DesktopPet(QWidget):
             self.snap_to_center()
         self.show()
 
+    def _current_screen(self):
+        """Return the screen the pet currently sits on (multi-monitor aware).
+
+        Falls back to the window's own screen, then the primary screen, if the
+        pet's center is between/outside displays.
+        """
+        center = QPoint(int(self.x_pos + self.sprite_width / 2),
+                        int(self.y_pos + self.sprite_height / 2))
+        screen = QGuiApplication.screenAt(center)
+        if screen is None:
+            screen = self.screen() or QApplication.primaryScreen()
+        return screen
+
+    def _avail_geo(self, fresh=False):
+        """Returns cached available geometry of the pet's *current* screen.
+
+        Refreshed roughly once per second (or immediately when ``fresh=True``)
+        instead of on every physics tick, so we avoid ~60 screen queries per
+        second while still supporting multiple monitors of different sizes.
+        """
+        if fresh or self._geo_cache is None or self._geo_ttl <= 0:
+            self._geo_cache = self._current_screen().availableGeometry()
+            self._geo_ttl = 60  # ~1s worth of ticks
+        self._geo_ttl -= 1
+        return self._geo_cache
+
     def snap_to_bottom(self):
         """Snaps the pet immediately to the bottom of the screen taskbar work-area."""
-        avail_geo = QApplication.primaryScreen().availableGeometry()
+        avail_geo = self._avail_geo(fresh=True)
         self.x_pos = (avail_geo.width() - self.sprite_width) // 2 + avail_geo.x()
         self.y_pos = avail_geo.height() - self.sprite_height + avail_geo.y()
         self.move(int(self.x_pos), int(self.y_pos))
 
     def snap_to_center(self):
         """Snaps the pet immediately to the center of the screen."""
-        avail_geo = QApplication.primaryScreen().availableGeometry()
+        avail_geo = self._avail_geo(fresh=True)
         self.x_pos = (avail_geo.width() - self.sprite_width) // 2 + avail_geo.x()
         self.y_pos = (avail_geo.height() - self.sprite_height) // 2 + avail_geo.y()
         self.move(int(self.x_pos), int(self.y_pos))
@@ -139,19 +197,55 @@ class DesktopPet(QWidget):
         self.label.setPixmap(pixmap)
 
     def handle_system_metrics(self, metrics):
-        """Processes live system metrics and updates pet visual state accordingly."""
+        """Single source of truth for automatic reactions.
+
+        Detects transition *events* (one-shot confirmations) then falls back to
+        steady-state priority reactions. This absorbs the work the separate
+        backend daemon used to do, so only one process/monitor runs and the two
+        can no longer race each other.
+        """
+        prev = self.latest_metrics
         self.latest_metrics = metrics
-        
-        # If backend or context menu override is active, skip system monitor reactions
+
+        # Manual/AI override suppresses all automatic reactions
         if self.backend_override:
             return
 
-        # Determine reaction animation
-        # Wi-Fi Disconnected -> "wifi_disconnected"
-        if metrics["wifi_status"] == "Disconnected":
+        # First sample only establishes a baseline (mirrors daemon startup).
+        if not self._metrics_primed:
+            self._metrics_primed = True
+            self._apply_steady_state(metrics)
+            return
+
+        # --- Transition events (edge-triggered one-shots) ---
+        online = metrics["wifi_status"] == "Connected"
+        was_online = prev.get("wifi_status") == "Connected"
+        if online and not was_online:
+            # Internet just came back -> reconnect confirmation (one-shot)
+            self.set_animation("wifi_connected")
+            return
+
+        if metrics["is_charging"] and metrics["battery"] >= 100 and prev.get("battery", 100) < 100:
+            # Battery just topped off while plugged in -> celebrate once
+            self.set_animation("charged_filled")
+            return
+
+        muted, prev_muted = metrics.get("muted"), prev.get("muted")
+        if muted is not None and prev_muted is not None and muted != prev_muted:
+            # System volume mute just toggled (only if audio monitoring works)
+            self.set_animation("muted" if muted else "unmuted")
+            return
+
+        # --- Steady-state priority reactions ---
+        self._apply_steady_state(metrics)
+
+    def _apply_steady_state(self, metrics):
+        """Priority-ordered reaction to the *current* system state."""
+        # Wi-Fi / network down -> "wifi_disconnected"
+        if metrics["wifi_status"] != "Connected":
             self.set_animation("wifi_disconnected")
-        # CPU > 75% -> "running" (computing intensely)
-        elif metrics["cpu"] > 75.0:
+        # CPU or RAM under heavy load -> "running" (working hard)
+        elif metrics["cpu"] > 75.0 or metrics["ram"] > 90.0:
             self.set_animation("running")
         # Battery low and unplugged (< 20%) -> "need_charging"
         elif metrics["battery"] < 20 and not metrics["is_charging"]:
@@ -173,33 +267,76 @@ class DesktopPet(QWidget):
         elif not metrics["is_charging"] and metrics["battery"] == 100:
             if self.current_anim not in ["charged_disconnected", "running_left", "running_right", "jump"]:
                 self.set_animation("charged_disconnected")
-        # Otherwise, check night status for sleep/tired state, or revert to normal idle/wander
+        # Otherwise: night schedule / inactivity drift / normal idle
         else:
-            import datetime
-            hour = datetime.datetime.now().hour
-            is_night = (hour >= 22 or hour < 6)
-            
-            if is_night:
-                if self.mode == "idle":
+            self._apply_rest_state()
+
+    def _apply_rest_state(self):
+        """Sleep/tired lifecycle driven by clock time and inactivity."""
+        hour = datetime.datetime.now().hour
+        is_night = (hour >= 22 or hour < 6)
+        rest_states = ["very_tired", "need_rest", "sleeping", "need_to_go_bed"]
+
+        if is_night:
+            if not self._bedtime_announced:
+                # One-shot bedtime reminder, then chains through to sleeping.
+                self._bedtime_announced = True
+                self.set_animation("need_to_go_bed")
+            elif self.mode == "idle":
+                if self.current_anim != "sleeping":
                     self.set_animation("sleeping")
-                else:
-                    if self.current_anim not in ["very_tired", "need_rest", "sleeping"]:
-                        self.set_animation("very_tired")
             else:
-                if self.current_anim in ["wifi_disconnected", "running", "failed", "charging", "charged_disconnected", "charged_filled", "need_charging", "wifi_connected", "sleeping", "very_tired", "need_rest", "need_to_go_bed", "idle_charged"]:
-                    self.set_animation("idle")
+                if self.current_anim not in rest_states:
+                    self.set_animation("very_tired")  # chains -> need_rest -> sleeping
+        else:
+            self._bedtime_announced = False  # reset for the next night
+            idle_for = time.monotonic() - self.last_activity
+            if idle_for >= self.INACTIVITY_SLEEP_S:
+                # Long daytime inactivity -> drift toward sleep.
+                if self.current_anim not in rest_states:
+                    self.set_animation("very_tired")
+            elif self.current_anim in ["wifi_disconnected", "running", "failed", "charging",
+                                        "charged_disconnected", "charged_filled", "need_charging",
+                                        "wifi_connected", "sleeping", "very_tired", "need_rest",
+                                        "need_to_go_bed", "idle_charged", "muted", "unmuted"]:
+                self.set_animation("idle")
+
+    def _mark_activity(self):
+        """Record user/AI interaction; wakes the pet if it was resting."""
+        self.last_activity = time.monotonic()
+        self._bedtime_announced = False
+        if not self.backend_override and self.current_anim in ["sleeping", "very_tired", "need_rest", "need_to_go_bed"]:
+            self.set_animation("idle")
+
+    def show_speech(self, text, duration_ms=4000):
+        """Show a short message in the speech bubble above the pet."""
+        self._mark_activity()
+        self.speech_bubble.show_message(text, duration_ms)
+        self._reposition_bubble()
+
+    def _reposition_bubble(self):
+        """Keep the speech bubble anchored above the pet as it moves."""
+        if self.speech_bubble.isVisible():
+            self.speech_bubble.reposition(self.x_pos, self.y_pos,
+                                          self.sprite_width, self._avail_geo())
 
     def trigger_manual_animation(self, name):
         """Triggers manual user/backend animation override."""
+        self._mark_activity()
         self.backend_override = True
         self.set_animation(name)
 
     def update_physics_loop(self):
-        """Main engine tick running at 60 FPS. Handles gravity, bounds, and wander behaviors."""
+        """Main engine tick. Handles gravity, bounds, and wander behaviors.
+
+        Runs at up to ~60fps while moving and throttles down to ~15fps while
+        static. All motion and timing are expressed in milliseconds so the
+        variable tick rate does not change movement speed or wander cadence.
+        """
         if self.is_dragging:
             return
 
-        avail_geo = QApplication.primaryScreen().availableGeometry()
+        avail_geo = self._avail_geo()
         min_x = avail_geo.x()
         max_x = avail_geo.x() + avail_geo.width() - self.sprite_width
         min_y = avail_geo.y()
@@ -231,9 +368,9 @@ class DesktopPet(QWidget):
         is_special_state = self.current_anim not in ["idle", "running_right", "running_left", "waiting", "running", "charging", "idle_charged", "charged_disconnected"]
 
         if self.mode == "wander" and not self.backend_override and not is_special_state and (not self.gravity_enabled or self.y_pos == max_y):
-            self.wander_timer -= 1
+            self.wander_timer -= self._phys_interval
             if self.wander_timer <= 0:
-                self.wander_timer = random.randint(60, 180) # 1 - 3 seconds
+                self.wander_timer = random.randint(960, 2880)  # ~1 - 3 seconds (ms)
                 
                 # Roll for horizontal movement
                 roll_x = random.random()
@@ -315,43 +452,62 @@ class DesktopPet(QWidget):
             if not self.gravity_enabled or self.y_pos == max_y:
                 self.vy = 0
 
+        # Adaptive tick rate: run fast only while actually moving or airborne,
+        # otherwise throttle down to save CPU. Motion/wander are ms-driven so
+        # this never alters visible speed or timing.
+        airborne = self.gravity_enabled and self.y_pos < max_y
+        moving = (self.vx != 0 or self.vy != 0
+                  or self.wander_direction != 0 or self.wander_direction_y != 0)
+        desired = self._phys_fast_ms if (airborne or moving) else self._phys_idle_ms
+        if desired != self._phys_interval:
+            self._phys_interval = desired
+            self.physics_timer.setInterval(desired)
+
         self.move(int(self.x_pos), int(self.y_pos))
+        self._reposition_bubble()
 
     # Mouse Drag Interactions
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            self._mark_activity()
             self.is_dragging = True
             # Store drag offset
             self.drag_offset = event.globalPosition().toPoint() - self.pos()
             self.set_animation("jump")
             event.accept()
 
-    def mouseMouseMoveEvent(self, event):
-        # Fallback or overrides for older Qt version mouse events
-        pass
-
     def mouseMoveEvent(self, event):
         if self.is_dragging:
             new_pos = event.globalPosition().toPoint() - self.drag_offset
-            
-            # Constrain window inside primary monitor workspace bounds during drag
-            avail_geo = QApplication.primaryScreen().availableGeometry()
+
+            # Constrain to the workspace of whichever monitor the pet is now on.
+            # Fresh lookup lets the pet adopt a new screen as it's dragged across.
+            avail_geo = self._avail_geo(fresh=True)
             new_x = max(avail_geo.x(), min(new_pos.x(), avail_geo.x() + avail_geo.width() - self.sprite_width))
             new_y = max(avail_geo.y(), min(new_pos.y(), avail_geo.y() + avail_geo.height() - self.sprite_height))
-            
+
             self.x_pos = new_x
             self.y_pos = new_y
             self.move(new_x, new_y)
+            self._reposition_bubble()
             event.accept()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.is_dragging = False
             self.vy = 0  # Let gravity pull it down from release height
+            # Invalidate cached geometry so the next tick re-resolves the
+            # current monitor (the pet may have crossed screens while dragging).
+            self._geo_ttl = 0
+            # Resume fast ticks immediately so a post-release fall is smooth.
+            if self._phys_interval != self._phys_fast_ms:
+                self._phys_interval = self._phys_fast_ms
+                self.physics_timer.setInterval(self._phys_fast_ms)
             event.accept()
 
     # Context Menu Actions
     def show_context_menu(self, pos):
+        self._mark_activity()
         menu = QMenu(self)
         menu.setStyleSheet("""
             QMenu {
@@ -413,7 +569,7 @@ class DesktopPet(QWidget):
         failed_act.triggered.connect(lambda: self.trigger_manual_animation("failed"))
 
         exit_act = QAction("❌ Close Companion", self)
-        exit_act.triggered.connect(QApplication.instance().quit)
+        exit_act.triggered.connect(self.shutdown)
 
         menu.addAction(wave_act)
         menu.addAction(pet_act)
@@ -505,6 +661,7 @@ class DesktopPet(QWidget):
             self.wander_direction_y = 0
 
     def set_mode_str(self, val):
+        self._mark_activity()
         self.mode = val
         if val == "idle":
             self.set_animation("idle")
@@ -514,12 +671,20 @@ class DesktopPet(QWidget):
     # Backend Connection commands
     def handle_backend_command(self, cmd_str):
         print(f"[Companion] Received command: {cmd_str}")
+        self._mark_activity()
         if ":" in cmd_str:
             target, val = cmd_str.split(":", 1)
             target = target.strip().lower()
-            val = val.strip().lower()
+            # Preserve the original (case-sensitive) value for commands like
+            # `say:` that carry human-readable text; lowercase only for the
+            # keyword-style commands compared below.
+            raw_val = val.strip()
+            val = raw_val.lower()
 
-            if target == "animation":
+            if target == "say":
+                # Show a short message bubble above the pet. Keeps original case.
+                self.show_speech(raw_val)
+            elif target == "animation":
                 if val in self.anims:
                     # Set manual override when backend requests a specific animation
                     self.backend_override = True
@@ -529,8 +694,40 @@ class DesktopPet(QWidget):
                     # Reset manual override when backend changes mode
                     self.backend_override = False
                     self.set_mode_str(val)
+            elif target == "state":
+                # Semantic AI-workflow states. Busy holds (looping) until the
+                # next state/override; success/error are one-shot and release
+                # the override automatically when they finish playing.
+                state_map = {"busy": "waiting", "success": "review", "error": "failed"}
+                if val == "idle":
+                    self.backend_override = False
+                    self.set_animation("idle")
+                elif val in state_map:
+                    self.backend_override = True
+                    self.set_animation(state_map[val])
+            elif target == "override":
+                # Allow the backend/AI to release (or re-lock) its hold so that
+                # automatic system reactions resume. Without this, a looping
+                # animation would leave backend_override stuck on forever.
+                if val == "clear":
+                    self.backend_override = False
+                elif val == "lock":
+                    self.backend_override = True
+
+    def shutdown(self):
+        """Cleanly stop worker threads before quitting the application.
+
+        Wired to the 'Close Companion' menu. QApplication.quit() alone does not
+        fire closeEvent(), so the listener/monitor threads would otherwise be
+        left running (QThread destroyed-while-running warning / hang on exit).
+        """
+        self.listener.stop()
+        self.monitor.stop()
+        self.speech_bubble.dismiss()
+        QApplication.instance().quit()
 
     def closeEvent(self, event):
         self.listener.stop()
         self.monitor.stop()
+        self.speech_bubble.close()
         event.accept()

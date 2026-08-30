@@ -1,3 +1,9 @@
 PySide6>=6.0.0
 pillow>=10.0.0
 psutil>=5.9.0
+
+# Optional: enables audio mute/unmute reactions (muted / unmuted animations).
+# The app runs fine without it; mute detection is simply disabled.
+# pycaw>=20230407
+# comtypes>=1.2.0
+

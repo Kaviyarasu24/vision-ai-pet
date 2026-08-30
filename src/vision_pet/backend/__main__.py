@@ -38,12 +38,21 @@ def main():
     last_power_plugged = None
     last_battery_percent = None
     last_online = None
-    
+
+    # Internet reachability is comparatively expensive (DNS / socket connect),
+    # so it is checked on a slower cadence than the battery/charger poll and
+    # cached in between. Battery reads (psutil) are cheap and stay at 1.5s.
+    online = check_online()
+    online_check_every = 4  # re-check ~every 4 * 1.5s = 6s
+    poll_count = 0
+
     try:
         while True:
             # Query current metrics
             battery = psutil.sensors_battery()
-            online = check_online()
+            if poll_count % online_check_every == 0:
+                online = check_online()
+            poll_count += 1
             
             if battery:
                 power_plugged = battery.power_plugged

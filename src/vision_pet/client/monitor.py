@@ -15,6 +15,22 @@ class SystemMonitor(QThread):
         self.interval = interval
         self.running = True
 
+        # --- CPU/resource throttling ---
+        # CPU and battery are cheap and polled every cycle. Wi-Fi (netsh) and
+        # especially Bluetooth (PowerShell) spawn subprocesses, so they are
+        # refreshed on a much slower schedule and cached in between. State that
+        # rarely changes should not cost a process spawn every few seconds.
+        self._cycle = 0
+        self._wifi_every = 2      # refresh Wi-Fi every 2 cycles (~6s at 3s interval)
+        self._online_every = 2    # re-check internet reachability every 2 cycles
+        self._bt_every = 10       # refresh Bluetooth every 10 cycles (~30s)
+        self._audio_every = 1     # mute state is cheap to read; check each cycle
+        self._wifi_cache = ("Disconnected", None)
+        self._bt_cache = "Unknown"
+        self._muted_cache = None
+        self._audio_iface = None      # cached pycaw endpoint volume interface
+        self._audio_available = None  # None=unknown, True/False once probed
+
     def run(self):
         print("[SystemMonitor] Thread started.")
         while self.running:
@@ -32,18 +48,36 @@ class SystemMonitor(QThread):
                 battery_percent = 100
                 is_charging = True
 
-            # Query Wi-Fi info
-            wifi_status, wifi_name = self.get_wifi_info()
-            
-            # If netsh reports disconnected, verify general internet connectivity (e.g. Ethernet)
-            if wifi_status != "Connected":
-                if self.check_online():
-                    wifi_status = "Connected"
-                    if not wifi_name:
-                        wifi_name = "Ethernet / Wired"
+            # Query Wi-Fi info (throttled: netsh subprocess is relatively costly)
+            if self._cycle % self._wifi_every == 0:
+                wifi_status, wifi_name = self.get_wifi_info()
 
-            # Query Bluetooth status
-            bluetooth = self.get_bluetooth_status()
+                # If netsh reports disconnected, verify general internet
+                # connectivity (e.g. Ethernet) — also throttled since it can
+                # block on DNS/socket calls.
+                if wifi_status != "Connected" and (self._cycle % self._online_every == 0):
+                    if self.check_online():
+                        wifi_status = "Connected"
+                        if not wifi_name:
+                            wifi_name = "Ethernet / Wired"
+                self._wifi_cache = (wifi_status, wifi_name)
+            else:
+                wifi_status, wifi_name = self._wifi_cache
+
+            # Query Bluetooth status (heavily throttled: PowerShell spawn is the
+            # single most expensive recurring call — BT state rarely changes)
+            if self._cycle % self._bt_every == 0:
+                self._bt_cache = self.get_bluetooth_status()
+            bluetooth = self._bt_cache
+
+            # Query audio mute state (throttled). Returns None when the optional
+            # audio backend (pycaw) is unavailable, in which case the pet simply
+            # never reacts to mute changes.
+            if self._cycle % self._audio_every == 0:
+                self._muted_cache = self.get_audio_muted()
+            muted = self._muted_cache
+
+            self._cycle += 1
 
             # Emit updated metrics dictionary
             metrics = {
@@ -53,7 +87,8 @@ class SystemMonitor(QThread):
                 "is_charging": is_charging,
                 "wifi_status": wifi_status,
                 "wifi_name": wifi_name,
-                "bluetooth": bluetooth
+                "bluetooth": bluetooth,
+                "muted": muted,
             }
             self.metrics_updated.emit(metrics)
 
@@ -139,3 +174,30 @@ class SystemMonitor(QThread):
             return "Not Found"
         except Exception:
             return "Unknown"
+
+    def get_audio_muted(self):
+        """Return True/False if the master volume mute state can be read, else None.
+
+        Uses the optional `pycaw` package (Windows Core Audio). If it is not
+        installed or the COM call fails, returns None and the mute feature is
+        silently disabled — nothing else breaks.
+        """
+        if sys.platform != "win32" or self._audio_available is False:
+            return None
+        try:
+            if self._audio_iface is None:
+                # Lazy, one-time import + interface acquisition.
+                from ctypes import cast, POINTER
+                from comtypes import CLSCTX_ALL
+                from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+                devices = AudioUtilities.GetSpeakers()
+                iface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+                self._audio_iface = cast(iface, POINTER(IAudioEndpointVolume))
+                self._audio_available = True
+            return bool(self._audio_iface.GetMute())
+        except Exception:
+            # pycaw missing or COM error — disable audio monitoring permanently.
+            self._audio_available = False
+            self._audio_iface = None
+            return None
+
