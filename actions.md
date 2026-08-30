@@ -1,62 +1,86 @@
 # VISION — AI Desktop Pet Actions
 
-This document lists all the interactive animations, autopilot behaviors, and API commands supported by the VISION Desktop Pet.
+This document lists all interactive animations, autopilot behaviors, and API
+commands supported by the VISION Desktop Pet.
 
 ---
 
 ## 🎭 Animation States
 
-These animations are sliced from `spritesheet.webp` and represent the visual states of the companion:
+Animations are sliced from the spritesheet named in `assets/robot/pet.json`
+(`newimage.webp` by default), configured via the `ANIMATIONS` dict in
+`client/utils.py`.
 
-| Animation Name | Row (0-indexed) | Frames | Typical Use Cases |
-| :--- | :---: | :---: | :--- |
-| `idle` | **0** | 1 | Stationary standby state (single stable frame). |
-| `running_right` | **1** | 8 | Wandering to the right of the screen. |
-| `running_left` | **2** | 8 | Wandering to the left of the screen. |
-| `wave` | **3** | 4 | Greeting, welcome prompt, or petting reaction. |
-| `jump` | **4** | 5 | Lifting action or jumping up during wander. |
-| `failed` | **5** | 8 | Process failure, syntax error, or warnings. |
-| `waiting` | **6** | 6 | Model inference, task loading, or database compile. |
-| `running` | **7** | 6 | Active code execution or computations. |
-| `review` | **8** | 6 | Process success, verification ready, or tasks completed. |
+| Row | Name | Frames | Loop | Typical Use / Trigger |
+| :--: | :--- | :----: | :--: | :--- |
+| 0 | `idle` | 6 | ✅ | Standard standby / blink state. |
+| 1 | `running_right` | 8 | ✅ | Wandering right. |
+| 2 | `running_left` | 8 | ✅ | Wandering left. |
+| 3 | `wave` | 4 | ❌ | Greeting / petting reaction. |
+| 4 | `jump` | 5 | ❌ | Hop, or reaction to being grabbed. |
+| 5 | `failed` | 8 | ❌ | Error (`state:error`) or manual trigger. |
+| 6 | `waiting` | 6 | ✅ | AI busy (`state:busy`). |
+| 7 | `running` | 6 | ✅ | High CPU (>75%) or RAM (>90%). |
+| 8 | `review` | 6 | ❌ | Task success (`state:success`). |
+| 9 | `charging` | 6 | ✅ | Plugged in, battery ≤ 85%. |
+| 10 | `charged_disconnected` | 5 | ✅ | Full and unplugged. |
+| 11 | `charged_filled` | 6 | ❌ | Battery just reached 100% while plugged. |
+| 12 | `need_charging` | 6 | ✅ | Battery < 20% and unplugged. |
+| 13 | `wifi_connected` | 5 | ❌ | Internet just restored. |
+| 14 | `wifi_disconnected` | 5 | ✅ | Network down. |
+| 15 | `muted` | 5 | ✅ | Volume muted *(needs pycaw)*. |
+| 16 | `unmuted` | 5 | ❌ | Volume restored *(needs pycaw)*. |
+| 17 | `very_tired` | 6 | ❌ | Long inactivity / low energy → `need_rest`. |
+| 18 | `need_rest` | 6 | ❌ | → `sleeping`. |
+| 19 | `sleeping` | 6 | ✅ | Night (22:00–06:00) or 5 min inactivity. |
+| 20 | `need_to_go_bed` | 5 | ❌ | Bedtime reminder at nightfall → `sleeping`. |
+| 21 | `welcoming` | 6 | ❌ | App open / return greeting. |
 
 ---
 
-## 🎯 Behavior Modes
+## 🎯 Behavior & Placement Modes
 
-The pet runs in one of two autonomy modes:
+- **Autopilot Wander (`wander`):** the pet autonomously walks, hops, and snaps
+  to boundaries.
+- **Static Idle (`idle`):** the pet stays put at its current coordinates.
+- **Float Freely:** no gravity; the pet can hover anywhere (default).
+- **Constrain to Taskbar:** gravity on; the pet falls and rests on the taskbar.
 
-* **Autopilot Wander (`wander`):**
-  The pet autonomously wanders across the screen, snaps to boundaries, walks left/right, and hops randomly.
-* **Static Idle (`idle`):**
-  The pet remains completely stationary at its current coordinates.
+All four are toggled from the right-click context menu.
 
 ---
 
 ## 🔌 Socket Control API
 
-You can trigger these animations and modes dynamically from your custom Python backend by sending a UTF-8 socket message to `127.0.0.1:5050` in the format `command:value`:
+Send a UTF-8 message to `127.0.0.1:5050` in the form `command:value`. Each call
+returns `OK`.
 
-### 1. Trigger Animation
-Send `animation:<name>` (e.g. `animation:wave`):
+| Command | Values | Effect |
+| :--- | :--- | :--- |
+| `animation:<name>` | any animation key above | Play that animation (locks override) |
+| `mode:<name>` | `wander`, `idle` | Set movement mode (clears override) |
+| `state:<name>` | `busy`, `success`, `error`, `idle` | AI states → `waiting` / `review` / `failed` / release |
+| `override:<name>` | `clear`, `lock` | Resume / block automatic system reactions |
+| `say:<text>` | any short message | Show a speech bubble above the pet (auto-dismisses ~4 s; case preserved) |
+
 ```python
 import socket
 
-def set_animation(name):
+def send(command):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect(("127.0.0.1", 5050))
-        s.sendall(f"animation:{name}".encode())
+        s.sendall(command.encode())
         return s.recv(1024).decode()
+
+send("state:busy")       # pet shows "waiting" while the AI works
+send("state:success")    # one-shot "review", then resumes automatic behavior
+send("override:clear")   # hand control back to the system monitor
+send("say:Deploying to prod…")  # floating message bubble above the pet
 ```
 
-### 2. Trigger Behavior Mode
-Send `mode:<name>` (e.g. `mode:idle`):
-```python
-import socket
+Convenience helpers live in `src/vision_pet/backend/stub.py`
+(`notify_task_started`, `notify_task_completed`, `notify_task_failed`,
+`notify_idle`).
 
-def set_mode(mode_name):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect(("127.0.0.1", 5050))
-        s.sendall(f"mode:{mode_name}".encode())
-        return s.recv(1024).decode()
-```
+> **Note:** The client monitors the system itself in a single background
+> thread — there is no separate always-on daemon in the default run path.
